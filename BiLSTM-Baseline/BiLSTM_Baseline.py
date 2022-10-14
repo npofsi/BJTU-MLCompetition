@@ -224,7 +224,7 @@ def train(train_loader: DataLoader, dev_loader: DataLoader, model: MyBiLSTM):
         print('epoch: ', epoch, ' loss:', loss_each_epoch / (index+1))
 
         # 验证集上获得测试结果
-        f1_macro = evaluate(dev_loader, model)
+        f1_macro = evaluate(dev_loader, model)[0]
         # 如果是最好的结果，则保存模型
         if f1_macro > f1_macro_best:
             f1_macro_best = f1_macro
@@ -251,7 +251,7 @@ def evaluate(data_loader: DataLoader, model: MyBiLSTM):
     # 设定模型状态
     model.eval()
 
-    acc = precision = recall = f1 = 0
+    acc = precision = recall = f1_macro = f1_micro = 0
     
     # 对所有的测试数据进行一次测试
     for index, (input, label) in enumerate(tqdm(data_loader)):
@@ -266,23 +266,49 @@ def evaluate(data_loader: DataLoader, model: MyBiLSTM):
         # dim = 1 指第一个纬度，也就是行
         prediction = torch.argmax(F.softmax(out, dim=1), dim=1)
         
-        # 计算指标要把 数值变成 cpu 上，在进行计算
+        # 计算指标要把 tensor变成numpy
         # label.detach().cpu().numpy() -> 就是把GPU上的数据，转移到CPU上
         acc += metrics.accuracy_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy())
         precision += metrics.precision_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy(), average='macro')
         recall += metrics.recall_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy(), average='macro')
-        f1 += metrics.f1_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy(), average='macro')
+        f1_macro += metrics.f1_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy(), average='macro')
+        f1_micro += metrics.f1_score(label.detach().cpu().numpy(), prediction.detach().cpu().numpy(), average='micro')
     
     # 求几次batch的均值
     acc /= index + 1
     precision /= index + 1
     recall /= index + 1
-    f1 /= index + 1
-    print('acc', acc, 'precision:', precision, ' recall:', recall, ' f1:', f1)
+    f1_macro /= index + 1
+    f1_micro /= index + 1
+    print('acc:', acc, 'precision:', precision, ' recall:', recall, ' f1_macro:', f1_macro, ' f1_micro:', f1_micro)
 
     model.train()
-    return f1
+    return f1_macro, f1_micro
 
+def test(data_loader: DataLoader, model: MyBiLSTM):
+    # 绑定设备
+    model.to(device)
+    # 设定模型状态
+    model.eval()
+    
+    res = torch.tensor([]).to(device)
+    # 对所有的测试数据进行一次测试
+    for index, (input, label) in enumerate(tqdm(data_loader)):
+        # 同训练部分
+        input = input.to(device)
+        label = label.to(device)
+        
+        out = model(input)
+        
+        # 使用softmax激活函数，使各类概率和为1
+        # 使用argmax返回值最大的元素的下标
+        # dim = 1 指第一个纬度，也就是行
+        prediction = torch.argmax(F.softmax(out, dim=1), dim=1)
+        # 所有的预测结果拼接到一起
+        res = torch.cat((res, prediction))
+
+    model.train()
+    return res
 
 if __name__ == '__main__':
     # 获取数据集
@@ -318,5 +344,9 @@ if __name__ == '__main__':
     model = torch.load(save_path)
     # 保存网络中参数的载入方法
     # model = model.load_state_dict(torch.load(save_path))
-    # 测试
+    # 有标签的测试（返回指标
     evaluate(data_loader=test_loader, model=model)
+    # 无标签的测试（返回测试结果
+    # dataloader 的 shuffer 要为 False
+    prediction = test(data_loader=test_loader, model=model)
+    
