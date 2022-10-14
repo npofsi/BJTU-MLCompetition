@@ -7,8 +7,8 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from sklearn import metrics 
 
-import warnings
-warnings.filterwarnings("ignore")
+# import warnings
+# warnings.filterwarnings("ignore")
 
 # 一些超参数
 # 每批次训练样本数量
@@ -23,7 +23,9 @@ hidden_size=64
 # 学习率
 lr = 0.01
 # 训练轮次
-epoch_num = 5
+epoch_num = 10
+# 早停次数
+early_stop = 3
 # 训练设备（有GPU就使用GPU否则使用CPU
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
@@ -39,8 +41,11 @@ label2idx = {
 
 # 数据集的路径
 train_path = '/data/yanxu/thucnews/train_set.csv'
+dev_path = '/data/yanxu/thucnews/eval_set.csv'
 test_path = '/data/yanxu/thucnews/test_set.csv'
 
+# 模型保存路径
+save_path = 'BiLSTM-Baseline/model.pth'
 
 # load stopwords set
 # 载入停用词，停用词对模型训练帮助很小但会增加训练时间，所以进行一个删除
@@ -103,17 +108,19 @@ class MyBiLSTM(nn.Module):
         # 输入 (batch_size, seq_len, embedding_dim)
         # 输出 (batch_size, sql_len, 2*hidden_size)
         self.bilstm = nn.LSTM(embedding_dim, hidden_size, batch_first=True, bidirectional=True)
-        # 输入 (batch_size, sql_len, 2*hidden_size)
-        # 输出 (batch_size, sql_len, output_size)
-        self.decoder = nn.Linear(2*hidden_size, output_size)
+        # 输入 (batch_size, 4*hidden_size)
+        # 输出 (batch_size, output_size)
+        self.decoder = nn.Linear(4*hidden_size, output_size)
 
     
     def forward(self, input):
         # 编码
         embedding = self.embedding(input)
         # BiLSTM，模型的主要部分
-        out, (h, c) = self.bilstm(embedding)
+        out, _ = self.bilstm(embedding)
         # 解码，将BiLSTM的输入转换为输出结果
+        # BiLSTM的首位token都可表示整句话的信息，所以将首位token做一个拼接，作为一句话的整体信息传入分类器
+        out = torch.cat((out[:,0,:], out[:,-1,:]), dim=1)
         out = self.decoder(out)
         return out
 
@@ -173,7 +180,7 @@ def build_dictionary(data: list) -> dict and dict and int:
     return word2idx, idx2word, len(word2idx)
 
 
-def train(train_loader: DataLoader, model: MyBiLSTM):
+def train(train_loader: DataLoader, dev_loader: DataLoader, model: MyBiLSTM):
     # 绑定运行设备
     model.to(device)
     # 切换成训练模式
@@ -184,19 +191,24 @@ def train(train_loader: DataLoader, model: MyBiLSTM):
     # 定义优化器
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     
+    # 最高的F1值
+    f1_macro_best = 0
+
+    # 早停计数
+    early_stop_flag = 0
+
     # 所有训练数据训练epoch_num轮
     for epoch in range(epoch_num):
+        print('*'*10)
         # 记录每一轮的平均loss
         loss_each_epoch = 0
-        for index, (input, label) in tqdm(enumerate(train_loader)):
+        for index, (input, label) in enumerate(tqdm(train_loader)):
             # 运算数据绑定设备
             input = input.to(device)
             label = label.to(device)
             # 前向传播
+            # (batch_size, output_size)
             out = model(input)
-            # （batch_size, sql_len, output_size）
-            # 取sql的第一个token(词)作为这句话的预测结果
-            out = out[:,0,:].squeeze(-1)
             # 计算损失
             loss = criterion(out, label)
             
@@ -211,6 +223,24 @@ def train(train_loader: DataLoader, model: MyBiLSTM):
 
         print('epoch: ', epoch, ' loss:', loss_each_epoch / (index+1))
 
+        # 验证集上获得测试结果
+        f1_macro = evaluate(dev_loader, model)
+        # 如果是最好的结果，则保存模型
+        if f1_macro > f1_macro_best:
+            f1_macro_best = f1_macro
+            early_stop_flag = 0
+            # 保存整个模型
+            torch.save(model, save_path)
+            # 保存网络中的参数（速度快，占空间小
+            # torch.save(model.state_dict(), save_path)
+            print('保存模型，f1_macro_best:', f1_macro_best)
+        else:
+            early_stop_flag += 1
+            if early_stop_flag == early_stop:
+                print(f'\nThe model has not been improved for {early_stop} rounds. Stop early!')
+                break
+        print('*'*10)
+
     print('训练完毕')
 
 
@@ -224,13 +254,12 @@ def evaluate(data_loader: DataLoader, model: MyBiLSTM):
     acc = precision = recall = f1 = 0
     
     # 对所有的测试数据进行一次测试
-    for index, (input, label) in tqdm(enumerate(data_loader)):
+    for index, (input, label) in enumerate(tqdm(data_loader)):
         # 同训练部分
         input = input.to(device)
         label = label.to(device)
         
         out = model(input)
-        out = out[:,0,:].squeeze(-1)
         
         # 使用softmax激活函数，使各类概率和为1
         # 使用argmax返回值最大的元素的下标
@@ -252,22 +281,28 @@ def evaluate(data_loader: DataLoader, model: MyBiLSTM):
     print('acc', acc, 'precision:', precision, ' recall:', recall, ' f1:', f1)
 
     model.train()
+    return f1
 
 
 if __name__ == '__main__':
     # 获取数据集
     train_data = load_title_label(train_path)
+    dev_data = load_title_label(dev_path)
     test_data = load_title_label(test_path)
     # 对数据集的title进行分词
     train_data_cut = fenci(train_data)
+    dev_data_cut = fenci(dev_data)
     test_data_cut = fenci(test_data)
     # 利用分词结果，构建词典
     word2idx, idx2word, num_embeddings = build_dictionary(train_data_cut)
     # 根据词典，构造MyDatasets
     train_iter = MyDatasets(data=train_data_cut, word2idx=word2idx, max_len=max_len)
+    dev_iter = MyDatasets(data=dev_data_cut, word2idx=word2idx, max_len=max_len)
     test_iter = MyDatasets(data=test_data_cut, word2idx=word2idx, max_len=max_len)
     # 构建数据集载入类
+    # 一般情况下，验证集和测试集 shuffle为False
     train_loader = DataLoader(dataset=train_iter, batch_size=batch_size ,shuffle=True)
+    dev_loader = DataLoader(dataset=dev_iter, batch_size=batch_size ,shuffle=True)
     test_loader = DataLoader(dataset=test_iter, batch_size=batch_size ,shuffle=True)
     # 定义模型
     model = MyBiLSTM(
@@ -277,6 +312,11 @@ if __name__ == '__main__':
         output_size=len(label2idx)
     )
     # 训练
-    train(train_loader=train_loader, model=model)
+    train(train_loader=train_loader, dev_loader=dev_loader, model=model)
+    # 载入验证集上表现最好的模型
+    # 保存整个模型的载入方法
+    model = torch.load(save_path)
+    # 保存网络中参数的载入方法
+    # model = model.load_state_dict(torch.load(save_path))
     # 测试
     evaluate(data_loader=test_loader, model=model)
