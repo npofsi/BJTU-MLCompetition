@@ -6,3 +6,4 @@
 - jieba/ 存放jieba分词的停用词文件
 - BiLSTM_Baseline.py baseline文件
 - 运行时要记得修改数据路径和停用词路径
+
