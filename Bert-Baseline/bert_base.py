@@ -4,10 +4,10 @@ from sklearn.metrics import accuracy_score, precision_recall_fscore_support,f1_s
 import math
 from datasets import load_dataset
 from transformers import BertTokenizer,BertModel,AdamW
-
+import time
 import warnings
 warnings.filterwarnings("ignore")
-BASE = os.getcwd() + "/bert-base"#文件位置目录
+BASE = os.getcwd() #文件位置目录
 
 
 
@@ -19,9 +19,9 @@ class Dataset(torch.utils.data.Dataset):
         self.label2id = {"科技":0,"股票":1,"教育":2,"财经":3,"娱乐":4} 
         #存放训练集 验证集和测试集的路径
         data_files={
-            "train": [f"{BASE}/data/extract/{label}-train.csv" for label in  self.label2id],
-            "dev": [f"{BASE}/data/extract/{label}-dev.csv" for label in  self.label2id],
-            "test": [f"{BASE}/data/extract/{label}-test.csv" for label in  self.label2id],
+           "train": [f"{BASE}/train_set.csv"],
+            "dev": [f"{BASE}/eval_set.csv"],
+            "test": [f"{BASE}/test_set.csv"],
         } 
         #读取数据，delimiter是每行的分隔符，column_names是文件数据的列名
         self.dataset = load_dataset('csv', data_files=data_files, delimiter='\t', column_names=[ "label","title", "content"], split=split)
@@ -111,7 +111,7 @@ class MyBertClassification(torch.nn.Module):
         out = out.softmax(dim=1) #softmax转换成概率
 
         return out
-
+from tqdm import tqdm
 def my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_path,early_stop,device,dev_batch):
     early_stop_flag = 0 
 
@@ -124,7 +124,7 @@ def my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_pa
     for epoch in range(num_epoch):
 
         for batch_id, (input_ids, attention_mask, token_type_ids,
-                labels) in enumerate(train_loader):
+                labels) in tqdm(enumerate(train_loader)):
             #标识模型训练
             model.train()
 
@@ -203,7 +203,7 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
                                      collate_fn=collate_fn,
                                      shuffle=True,
                                      drop_last=True)
-    model.eval()
+    test_model.eval()
     test_out=torch.tensor([]);test_label = torch.tensor([])
     for batchid, (input_ids, attention_mask, token_type_ids,
             labels) in enumerate(test_loader):
@@ -213,7 +213,7 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
 
         #测试过程没有梯度
         with torch.no_grad():
-            out = model(input_ids=input_ids,
+            out = test_model(input_ids=input_ids,
                         attention_mask=attention_mask,
                         token_type_ids=token_type_ids) #(bs,outdim)
 
@@ -221,7 +221,7 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
         test_label=torch.concat([test_label,labels])
         test_out=torch.concat([test_out,out.cpu()])
 
-    zb = model.compute(test_label, test_out)
+    zb = test_model.compute(test_label, test_out)
     print(f"*** test ***")     
     print(zb) 
     return  test_out  
@@ -230,9 +230,10 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
 
 #--------------------- 参数设置 模型初始化 --------------------------------------------------
 # GPU or CPU
-device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
-# 学习率,不参与fine-tune时 可以设置5e-5
-lr=1e-6 
+#device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+device = 'cpu'
+# 学习率,不参与fine-tune时 可以设置5e-4或更大
+lr=1e-5
 # bert是否参与下游的微调
 is_finetune=True
 # 早停，如果10次内指标不再上升就停止训练
@@ -248,12 +249,13 @@ batch_size=32
 # 每dev_batch个batch后进行验证集的指标评估
 dev_batch=40 
 
+strat_time = time.time()
 #加载预训练模型Bert
-pretrained = BertModel.from_pretrained(f'{BASE}/model/bert-base-chinese').to(device) # huggingface模型
+pretrained = BertModel.from_pretrained('bert-base-chinese').to(device) # huggingface模型
 #定义自己的文本分类模型
 model = MyBertClassification(num_label,pretrained,is_finetune).to(device)
 #加载字典和分词工具
-tokenizer = BertTokenizer.from_pretrained(f'{BASE}/model/bert-base-chinese')
+tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
 
 #数据加载器
 train_dataset = Dataset('train')
@@ -275,10 +277,13 @@ optimizer = AdamW(model.parameters(), lr=lr)
 criterion = torch.nn.CrossEntropyLoss().to(device)
 
 #训练
-my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_path,early_stop,device,dev_batch)
+# my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_path,early_stop,device,dev_batch)
 
 #测试
 my_test(save_path,num_label,pretrained,is_finetune,device)
+end_time = time.time()
+total_time = strat_time - end_time
+print(total_time)
 #--------------------------------------------------------------------------------------------
 
 
