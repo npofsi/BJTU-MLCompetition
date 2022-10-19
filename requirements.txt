@@ -1,0 +1,9 @@
+torch==1.12.0
+transformers==4.1.1
+datasets==2.6.1
+numpy
+pandas
+jieba
+tqdm
+sklearn
+gensim==4.2.0
