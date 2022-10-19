@@ -14,7 +14,7 @@ import random
 # warnings.filterwarnings("ignore")
 
 # 是否使用word2vec模型进行初始化
-use_pretrained_model = True
+use_pretrained_model = False
 # 一些超参数
 # 每批次训练样本数量
 batch_size = 128
