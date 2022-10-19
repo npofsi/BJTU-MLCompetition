@@ -27,7 +27,7 @@ epoch_num = 10
 # 早停次数
 early_stop = 3
 # 训练设备（有GPU就使用GPU否则使用CPU
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
 
 # 标签对应的id（计算过程中使用id进行计算
@@ -47,6 +47,8 @@ test_path = '/data/yanxu/thucnews/test_set.csv'
 # 模型保存路径
 save_path = 'BiLSTM-Baseline/model.pth'
 
+# 载入jieba词典
+jieba.set_dictionary(r"BiLSTM-Baseline/jieba/dict.txt.big")
 # load stopwords set
 # 载入停用词，停用词对模型训练帮助很小但会增加训练时间，所以进行一个删除
 stopword_set = set()
@@ -128,6 +130,7 @@ class MyBiLSTM(nn.Module):
 def load_title_label(path: str) -> list:
     """
     读取数据文件，并将label处理为对应的序列号，返回一个二维列表
+    [[title, label]]
     """
     examples = pd.read_table(path, sep='\t', names=['label', 'title', 'text']) # 读取data文件
     data = []
@@ -140,13 +143,15 @@ def load_title_label(path: str) -> list:
 
 def fenci(data: list) -> list:
     """
+    data: [[title, label]]
+    return: [[title_cut, label]]
     对标题进行分词操作
     """
     data_cut = []
     # 遍历每一个数据
     for example in data:        
         # 对title进行分词
-        words = set(jieba.cut(example[0]))
+        words = sorted(set(jieba.cut(example[0])), key=example[0].index)
         # 去除停用词
         temp = []
         for item in words:
