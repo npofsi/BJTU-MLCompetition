@@ -3,12 +3,19 @@
 链接：https://pan.baidu.com/s/1ZBbkcOJLbJUse37CAWnCQg 
 提取码：0pgu
 ## 安装环境
-1. 安装anaconda并创建虚拟环境
+1. 安装anaconda
 - anaconda安装：https://www.cnblogs.com/sui776265233/p/11453004.html
+2. 安装需要的python库
 - 虚拟环境管理教程：https://blog.csdn.net/weixin_43267006/article/details/124847368
-2. 切换到虚拟环境，安装需要的python库
-### 如果使用GPU训练，还需安装cuda
-https://blog.csdn.net/m0_45447650/article/details/123704930
+- 创建并切换到虚拟环境后，安装python库
+```cmd
+conda create -n your_vritual_env_name python=3.8
+conda activete your_vritual_env_name
+pip install -r requirements.txt
+
+``` 
+3. 如果使用GPU训练，还需安装cuda
+- https://blog.csdn.net/m0_45447650/article/details/123704930
 ## Bert-Baseline
 - 文本分类-bert.ipynb 仅供大家参考学习
 - bert_base.py 真正的baseline文件
