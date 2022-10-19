@@ -2,14 +2,19 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 import torch
 import jieba
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import torch.nn.functional as F
 from sklearn import metrics 
-
+from gensim.models import Word2Vec
+import os
+import random
 # import warnings
 # warnings.filterwarnings("ignore")
 
+# 是否使用word2vec模型进行初始化
+use_pretrained_model = True
 # 一些超参数
 # 每批次训练样本数量
 batch_size = 128
@@ -25,7 +30,7 @@ lr = 0.01
 # 训练轮次
 epoch_num = 10
 # 早停次数
-early_stop = 3
+early_stop = 5
 # 训练设备（有GPU就使用GPU否则使用CPU
 device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
@@ -47,6 +52,9 @@ test_path = '/data/yanxu/thucnews/test_set.csv'
 # 模型保存路径
 save_path = 'BiLSTM-Baseline/model.pth'
 
+# word2vec 模型路径
+w2v_path = 'BiLSTM-Baseline/word2vector/model/w2v.model'
+
 # 载入jieba词典
 jieba.set_dictionary(r"BiLSTM-Baseline/jieba/dict.txt.big")
 # load stopwords set
@@ -54,7 +62,10 @@ jieba.set_dictionary(r"BiLSTM-Baseline/jieba/dict.txt.big")
 stopword_set = set()
 with open(r"BiLSTM-Baseline/jieba/stopwords_simple.txt", 'r', encoding='utf-8') as stopwords:
     for stopword in stopwords:
-        stopword_set.add(stopword.strip('\n'))
+        if stopword == '\\u3000':
+            stopword_set.add(r'\u3000')
+        else:
+            stopword_set.add(stopword.strip('\n'))
 
 
 class MyDatasets(Dataset):
@@ -95,7 +106,7 @@ class MyBiLSTM(nn.Module):
     1.__init__ 初始化函数，定义类的结构
     2.__forward__ 前向传播函数
     """
-    def __init__(self, num_embeddings, embedding_dim, hidden_size, output_size) -> None:
+    def __init__(self, num_embeddings, embedding_dim, hidden_size, output_size, weight=None) -> None:
         """
         num_embeddings: 词典中词语的数量（一共需要编码多少个词
         embedding_dim: 每个词用多少个数值进行编码
@@ -106,7 +117,12 @@ class MyBiLSTM(nn.Module):
         # 编码层
         # 输入 (batch_size, seq_len)
         # 输出 (batch_size, seq_len, embedding_dim)
-        self.embedding = nn.Embedding(num_embeddings=num_embeddings, embedding_dim=embedding_dim)
+        if weight is not None:
+            # freeze (boolean, optional): If ``True``, the tensor does not get updated in the learning process.
+            # Equivalent to ``embedding.weight.requires_grad = False``. Default: ``True``
+            self.embedding = nn.Embedding.from_pretrained(weight, freeze=False)
+        else:
+            self.embedding = nn.Embedding(num_embeddings=num_embeddings, embedding_dim=embedding_dim)
         # 输入 (batch_size, seq_len, embedding_dim)
         # 输出 (batch_size, sql_len, 2*hidden_size)
         self.bilstm = nn.LSTM(embedding_dim, hidden_size, batch_first=True, bidirectional=True)
@@ -136,6 +152,7 @@ def load_title_label(path: str) -> list:
     data = []
     for item in zip(examples['title'], examples['label']): # 打包title列 和 label列
         item = list(item)
+        item[0] = item[0].replace('\u3000', '')
         item[1] = label2idx[item[1]] # 将label处理为对应的 index
         data.append(item)
     return data
@@ -315,7 +332,41 @@ def test(data_loader: DataLoader, model: MyBiLSTM):
     model.train()
     return res
 
+
+def get_w2v_weight(w2v_model: Word2Vec) -> list:
+    """
+    
+    """
+    vocab_size = len(w2v_model.wv)
+
+    weight = torch.zeros(vocab_size + 1, w2v_model.vector_size)
+    for word, index in w2v_model.wv.key_to_index.items():
+        this_embedding = np.copy(w2v_model.wv[word])
+        weight[index, :] = torch.from_numpy(this_embedding)
+    
+    return weight
+
+def seed_everything(seed=1029):
+    '''
+    设置整个开发环境的seed
+    :param seed:
+    :param device:
+    :return:
+    '''
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # some cudnn methods can be random even after fixing the seed
+    # unless you tell it to be deterministic
+    torch.backends.cudnn.deterministic = True
+
 if __name__ == '__main__':
+    # 设置整个开发环境的seed
+    seed_everything(60)
+    
     # 获取数据集
     train_data = load_title_label(train_path)
     dev_data = load_title_label(dev_path)
@@ -324,8 +375,17 @@ if __name__ == '__main__':
     train_data_cut = fenci(train_data)
     dev_data_cut = fenci(dev_data)
     test_data_cut = fenci(test_data)
-    # 利用分词结果，构建词典
-    word2idx, idx2word, num_embeddings = build_dictionary(train_data_cut)
+    
+    if use_pretrained_model:
+        # 利用word2vec模型构建词典
+        w2v_model = Word2Vec.load(w2v_path) # load Word2Vec 模型
+        word2idx = w2v_model.wv.key_to_index # type：dict
+        idx2word = w2v_model.wv.index_to_key # type：list
+        num_embeddings = len(w2v_model.wv)
+    else:
+        # 利用分词结果，构建词典
+        word2idx, idx2word, num_embeddings = build_dictionary(train_data_cut)
+    
     # 根据词典，构造MyDatasets
     train_iter = MyDatasets(data=train_data_cut, word2idx=word2idx, max_len=max_len)
     dev_iter = MyDatasets(data=dev_data_cut, word2idx=word2idx, max_len=max_len)
@@ -335,13 +395,25 @@ if __name__ == '__main__':
     train_loader = DataLoader(dataset=train_iter, batch_size=batch_size ,shuffle=True)
     dev_loader = DataLoader(dataset=dev_iter, batch_size=batch_size ,shuffle=True)
     test_loader = DataLoader(dataset=test_iter, batch_size=batch_size ,shuffle=True)
+    
     # 定义模型
-    model = MyBiLSTM(
-        num_embeddings=num_embeddings, 
-        embedding_dim=embedding_dim,
-        hidden_size=hidden_size,
-        output_size=len(label2idx)
-    )
+    if use_pretrained_model:
+        weight = get_w2v_weight(w2v_model=w2v_model)
+        model = model = MyBiLSTM(
+            num_embeddings=num_embeddings, 
+            embedding_dim=embedding_dim,
+            hidden_size=hidden_size,
+            output_size=len(label2idx),
+            weight=weight 
+        )
+    else:
+        model = MyBiLSTM(
+            num_embeddings=num_embeddings, 
+            embedding_dim=embedding_dim,
+            hidden_size=hidden_size,
+            output_size=len(label2idx)
+        )
+
     # 训练
     train(train_loader=train_loader, dev_loader=dev_loader, model=model)
     # 载入验证集上表现最好的模型
