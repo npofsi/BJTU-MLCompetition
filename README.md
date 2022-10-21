@@ -1,6 +1,6 @@
 # Baseline
 ## 数据集地址
-链接: https://pan.baidu.com/s/1uqrNvqQGR4Adr11hUALKwQ?pwd=p4kk 提取码: p4kk
+
 ## 安装环境
 1. 安装anaconda
 - anaconda安装：https://www.cnblogs.com/sui776265233/p/11453004.html
