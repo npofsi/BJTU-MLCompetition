@@ -1,7 +1,8 @@
 from gensim.models import Word2Vec
 from gensim.models.word2vec import LineSentence
 import sys
-sys.path.append("/data/qingyang/Baseline/BiLSTM-Baseline/")
+sys.path.append("BiLSTM-Baseline/")
+print(sys.path)
 from BiLSTM_Baseline import load_title_label, fenci, train_path
 
 cut_save_path = "data/train_cut.txt"

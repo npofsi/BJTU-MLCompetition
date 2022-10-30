@@ -45,9 +45,9 @@ label2idx = {
 }
 
 # 数据集的路径
-train_path = '/data/yanxu/thucnews/train_set.csv'
-dev_path = '/data/yanxu/thucnews/eval_set.csv'
-test_path = '/data/yanxu/thucnews/test_set.csv'
+train_path = 'data/Data/train_set.csv'
+dev_path = 'data/Data/eval_set.csv'
+test_path = 'data/Data/test.csv'
 
 # 模型保存路径
 save_path = 'BiLSTM-Baseline/model.pth'
