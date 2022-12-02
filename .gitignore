@@ -1,5 +1,3 @@
 *.pth
 *.model
 *.vector
-data/*
-__*
