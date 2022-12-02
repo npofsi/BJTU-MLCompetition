@@ -14,25 +14,25 @@ import random
 # warnings.filterwarnings("ignore")
 
 # 是否使用word2vec模型进行初始化
-use_pretrained_model = False
+use_pretrained_model = True
 # 一些超参数
 # 每批次训练样本数量
-batch_size = 128
+batch_size = 256
 # 每个title最多有多少个词送入模型
-max_len = 10
+max_len = 30
 # 对词语进行编码的长度
 # ⬇ 意思每个词语由200个 数值 来表示
 embedding_dim=200
 # BiLSTM隐层层数
 hidden_size=64
 # 学习率
-lr = 0.01
+lr = 0.0001
 # 训练轮次
-epoch_num = 10
+epoch_num = 200
 # 早停次数
-early_stop = 5
+early_stop = 40
 # 训练设备（有GPU就使用GPU否则使用CPU
-device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 # device = 'cpu'
 
 # 标签对应的id（计算过程中使用id进行计算
@@ -50,7 +50,7 @@ dev_path = 'data/Data/eval_set.csv'
 test_path = 'data/Data/test.csv'
 
 # 模型保存路径
-save_path = 'BiLSTM-Baseline/model.pth'
+save_path = 'BiLSTM-Baseline/model2.pth'
 
 # word2vec 模型路径
 w2v_path = 'BiLSTM-Baseline/word2vector/model/w2v.model'
@@ -99,6 +99,36 @@ class MyDatasets(Dataset):
     def __len__(self):
         return len(self.data)
 
+class MyDatasetsx(Dataset):
+    """
+    构建数据集。
+    继承Dataset的类要实现以下三个函数：
+    1. __init__ 初始化函数
+    2. __getitem__ 使类的实例可以按照下标访问 -> mydatasets[0]
+    3. __len__ 使类的实例可以被len()函数衡量 -> len(mydatasets)
+    """
+    def __init__(self, data, word2idx, max_len) -> None:
+        self.data = data
+
+        for index in range(len(data)):
+            # 将每个词语都根据词典转换成对应的id
+            # 不存在词典中的词语会用<UNK>替代
+            idx = [ word2idx.get(word, 0) for word in data[index][0]]
+            if len(idx) >= max_len:
+                # title所含词语大于最大长度，截断
+                self.data[index][0] = idx[:max_len]
+            else:
+                # title所含词语小于最大长度，用<PAD>补全
+                self.data[index][0] = idx + [1] * (max_len - len(idx))
+    
+    def __getitem__(self, index):
+        # 转换训练数据和label的格式为torch.tensor
+        x = torch.tensor(self.data[index][0], dtype=torch.long)
+        label = torch.tensor([])#0, dtype=torch.long)
+        return x, label
+
+    def __len__(self):
+        return len(self.data)
 
 class MyBiLSTM(nn.Module):
     """
@@ -157,7 +187,20 @@ def load_title_label(path: str) -> list:
         data.append(item)
     return data
 
-
+def load_title_labelx(path: str) -> list:
+    """
+    读取数据文件，并将label处理为对应的序列号，返回一个二维列表
+    [[title, label]]
+    """
+    examples = pd.read_table(path, sep='\t', names=['Id', 'title']) # 读取data文件
+    data = []
+    for item in zip(examples['title']): # 打包title列 和 label列
+        item = list(item)
+        item[0] = item[0].replace('\u3000', '')
+        #item[1] = label2idx[item[1]] # 将label处理为对应的 index
+        data.append(item)
+    return data
+    
 def fenci(data: list) -> list:
     """
     data: [[title, label]]
@@ -177,6 +220,28 @@ def fenci(data: list) -> list:
         words = temp
         # 保存分词后的结果
         data_cut.append([words, example[1]])
+    
+    return data_cut
+
+def fencix(data: list) -> list:
+    """
+    data: [[title, label]]
+    return: [[title_cut, label]]
+    对标题进行分词操作
+    """
+    data_cut = []
+    # 遍历每一个数据
+    for example in data:        
+        # 对title进行分词
+        words = sorted(set(jieba.cut(example[0])), key=example[0].index)
+        # 去除停用词
+        temp = []
+        for item in words:
+            if item not in stopword_set:
+                temp.append(item)
+        words = temp
+        # 保存分词后的结果
+        data_cut.append([words, ""])
     
     return data_cut
 
@@ -370,11 +435,11 @@ if __name__ == '__main__':
     # 获取数据集
     train_data = load_title_label(train_path)
     dev_data = load_title_label(dev_path)
-    test_data = load_title_label(test_path)
+    test_data = load_title_labelx(test_path)
     # 对数据集的title进行分词
     train_data_cut = fenci(train_data)
     dev_data_cut = fenci(dev_data)
-    test_data_cut = fenci(test_data)
+    test_data_cut = fencix(test_data)
     
     if use_pretrained_model:
         # 利用word2vec模型构建词典
@@ -389,7 +454,7 @@ if __name__ == '__main__':
     # 根据词典，构造MyDatasets
     train_iter = MyDatasets(data=train_data_cut, word2idx=word2idx, max_len=max_len)
     dev_iter = MyDatasets(data=dev_data_cut, word2idx=word2idx, max_len=max_len)
-    test_iter = MyDatasets(data=test_data_cut, word2idx=word2idx, max_len=max_len)
+    test_iter = MyDatasetsx(data=test_data_cut, word2idx=word2idx, max_len=max_len)
     # 构建数据集载入类
     # 一般情况下，验证集和测试集 shuffle为False
     train_loader = DataLoader(dataset=train_iter, batch_size=batch_size ,shuffle=True)
@@ -422,8 +487,19 @@ if __name__ == '__main__':
     # 保存网络中参数的载入方法
     # model = model.load_state_dict(torch.load(save_path))
     # 有标签的测试（返回指标
-    evaluate(data_loader=test_loader, model=model)
+    #evaluate(data_loader=test_loader, model=model)
     # 无标签的测试（返回测试结果
     # dataloader 的 shuffer 要为 False
     prediction = test(data_loader=test_loader, model=model)
-    
+   
+    test_out_label=["Id,label\n"]
+
+    print("Catching Label")
+    id2label = ["科技","股票","教育","财经","娱乐"]
+    for i, id in enumerate(prediction):
+        test_out_label.append(str(i)+","+id2label[int(id)]+"\n")
+    print(test_out_label)
+    f=open("./result/test_result_fc.csv","w")
+    f.writelines(test_out_label)
+    f.close()
+    print(prediction) 

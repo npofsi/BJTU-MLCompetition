@@ -3,9 +3,12 @@ import os
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support,f1_score
 import math
 from datasets import load_dataset
-from transformers import BertTokenizer,BertModel,AdamW
+from transformers import BertTokenizer,BertModel,AdamW,AdamWeightDecay
 import time
 import warnings
+import codecs
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
 warnings.filterwarnings("ignore")
 BASE = os.getcwd() #文件位置目录
 
@@ -30,10 +33,38 @@ class Dataset(torch.utils.data.Dataset):
         return len(self.dataset)
 
     def __getitem__(self, i): #迭代生成每条数据
-        text = self.dataset[i]['title'] #一个i就是一条数据，将标题作为训练的文本，也可以增加content
+        text=""
+        if self.dataset[i]['content'] is None:
+            text += self.dataset[i]['title']
+        else:
+             #一个i就是一条数据，将标题作为训练的文本，也可以增加content
+            text += self.dataset[i]['title']#+self.dataset[i]['content']
         label = self.label2id[self.dataset[i]['label']]  #把文字的label转换成id
 
         return text, label
+
+
+#定义数据集
+class Datasetx(torch.utils.data.Dataset):
+    def __init__(self, split):
+        self.label2id = {"科技":0,"股票":1,"教育":2,"财经":3,"娱乐":4} 
+        #存放训练集 验证集和测试集的路径
+        data_files={
+            "test": [f"{BASE}/data/Data/test.csv"],
+        } 
+        #读取数据，delimiter是每行的分隔符，column_names是文件数据的列名
+        self.dataset = load_dataset('csv', data_files=data_files, delimiter='\t', column_names=[ "id", "title"], split=split)
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, i): #迭代生成每条数据
+        text = self.dataset[i]['title'] #一个i就是一条数据，将标题作为训练的文本，也可以增加content
+        label = ""#self.label2id[self.dataset[i]['label']]  #把文字的label转换成id
+
+        return text, label
+
+
 
 #数据加载函数
 def collate_fn(data): 
@@ -111,6 +142,7 @@ class MyBertClassification(torch.nn.Module):
         out = out.softmax(dim=1) #softmax转换成概率
 
         return out
+
 from tqdm import tqdm
 def my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_path,early_stop,device,dev_batch):
     early_stop_flag = 0 
@@ -197,7 +229,7 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
     test_model.load_state_dict(torch.load(save_path)['net'])
 
     #测试集加载
-    test_dataset = Dataset('test')
+    test_dataset = Dataset('dev')
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                                      batch_size=32,
                                      collate_fn=collate_fn,
@@ -226,12 +258,64 @@ def my_test(save_path,num_label,bertmodel,is_finetune,device):
     print(zb) 
     return  test_out  
 
+def my_gen(save_path,num_label,bertmodel,is_finetune,device):
+    
+    id2label = ["科技","股票","教育","财经","娱乐"]
+    #加载最优模型       
+    test_model = MyBertClassification(num_label,bertmodel,is_finetune).to(device)
+    test_model.load_state_dict(torch.load(save_path)['net'])
+
+    #测试集加载
+    test_dataset = Datasetx('test')
+    test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
+                                     collate_fn=collate_fn,
+                                     shuffle=False,
+                                     drop_last=True)
+    test_model.eval()
+
+    test_out=torch.tensor([])
+    test_label = torch.tensor([])
+
+    for batchid, (input_ids, attention_mask, token_type_ids,
+            labels) in enumerate(test_loader):
+        input_ids=input_ids.to(device)
+        attention_mask=attention_mask.to(device)
+        token_type_ids=token_type_ids.to(device)
+
+        #测试过程没有梯度
+        with torch.no_grad():
+            out = test_model(input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        token_type_ids=token_type_ids) #(bs,outdim)
+
+        out = out.argmax(dim=1)
+        #test_label=torch.concat([test_label,labels])
+        test_out=torch.concat([test_out,out.cpu()])
+
+    #zb = test_model.compute(test_label, test_out)
+    print(f"*** test ***")     
+    test_out_label=["Id,label\n"]
+
+    print("Catching Label")
+
+    for i, id in enumerate(test_out):
+        test_out_label.append(str(i)+","+id2label[int(id)]+"\n")
+    print(test_out_label)
+    f=open("./result/test_result.csv","w")
+    f.writelines(test_out_label)
+    f.close()
+
+    print(test_out) 
+    return  test_out
+
+
 
 
 #--------------------- 参数设置 模型初始化 --------------------------------------------------
 # GPU or CPU
-#device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
-device = 'cpu'
+device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+print("Current Device",device)
+#device = 'cuda:1'
 # 学习率,不参与fine-tune时 可以设置5e-4或更大
 lr=1e-5
 # bert是否参与下游的微调
@@ -245,15 +329,15 @@ num_epoch=5
 # 标签类别
 num_label=5
 # batch大小 可以适当增大或减小
-batch_size=32
+batch_size=40
 # 每dev_batch个batch后进行验证集的指标评估
-dev_batch=40 
+dev_batch=32
 
 strat_time = time.time()
 #加载预训练模型Bert
 pretrained = BertModel.from_pretrained('bert-base-chinese').to(device) # huggingface模型
 #定义自己的文本分类模型
-model = MyBertClassification(num_label,pretrained,is_finetune).to(device)
+model = MyBertClassification(num_label,pretrained,is_finetune).to(device) 
 #加载字典和分词工具
 tokenizer = BertTokenizer.from_pretrained('bert-base-chinese')
 
@@ -280,10 +364,14 @@ criterion = torch.nn.CrossEntropyLoss().to(device)
 my_train(model,optimizer,criterion,train_loader,dev_loader,num_epoch,save_path,early_stop,device,dev_batch)
 
 #测试
-my_test(save_path,num_label,pretrained,is_finetune,device)
+#my_test(save_path,num_label,pretrained,is_finetune,device)
 end_time = time.time()
 total_time = strat_time - end_time
 print(total_time)
+
+my_gen(save_path,num_label,pretrained,is_finetune,device)
+
+
 #--------------------------------------------------------------------------------------------
 
 
