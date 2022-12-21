@@ -1,0 +1,4 @@
+log
+logp
+*.pt
+.ipynb_checkpoints

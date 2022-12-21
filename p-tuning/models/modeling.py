@@ -55,7 +55,7 @@ class PTuneForClassification(torch.nn.Module):
         return self.prompt_encoder.tokenize(query, prompt_tokens)
 
 
-    def forward(self, sentences, labels, sentences2=None): 
+    def forward(self, sentences, labels, sentences2=None,epoch_i=-1,batch_i=-1): 
         bz = len(sentences)
         prompt_tokens = [self.pseudo_token_id]
         if self.args.task_name == 'SST-2':
@@ -91,6 +91,29 @@ class PTuneForClassification(torch.nn.Module):
             predicted_label.append(pred_seq[0])
             batch_interested_logits.append(interested_logits[i,label_mask[i, 0]].cpu())
         batch_interested_logits = torch.stack(batch_interested_logits).to(self.device)
+        #print(batch_interested_logits,label_ids
+        # 
+        # 
+        # 
+        # )
+
+        if epoch_i!=-1 and batch_i!=-1 and epoch_i == batch_i:
+            print("Save log")
+            lines=[]
+            
+            for i,d in enumerate(sentences):
+                indices = torch.LongTensor([i, 1, 1]).cpu()
+                batch_interested_logits_c=batch_interested_logits.clone().detach().cpu()
+                t=torch.index_select(batch_interested_logits_c, 0, indices)
+                if sentences2 is not None:
+                    lines.append(""+str(predicted_label[i])+"|"+str(labels[i])+", "+str(sentences[i])+" + "+str(sentences2[i])+", "+str(t)+"\n")
+                else:
+                    lines.append(""+str(predicted_label[i])+"|"+str(labels[i])+", "+str(sentences[i])+", "+str(t)+"\n")
+
+
+            fo = open("logp\\"+self.args.task_name+"_batchlog_"+str(epoch_i)+"_"+str(batch_i)+".txt", mode="w", encoding="utf-8")
+            fo.writelines(lines)
+
         loss = self.ce_loss(batch_interested_logits, label_ids.squeeze(1))
         return loss, predicted_label 
 

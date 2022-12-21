@@ -99,14 +99,14 @@ def train():
                     if args.task_name == 'SST-2':
                         for batch_idx, batch_data in tqdm(enumerate(dev_loader)):
                             sentences, labels = batch_data
-                            dev_loss, dev_pred = model(sentences, labels)
+                            dev_loss, dev_pred = model(sentences, labels, epoch_idx, batch_idx)
                             total_dev_loss += dev_loss.item()
                             total_dev_pred += dev_pred
                             total_dev_labels += labels.tolist()
                     elif args.task_name == 'SNLI':
                         for batch_idx, batch_data in tqdm(enumerate(dev_loader)):
                             sentences_a, sentences_b, labels = batch_data
-                            dev_loss, dev_pred = model(sentences_a, labels, sentences_b)
+                            dev_loss, dev_pred = model(sentences_a, labels, sentences_b, epoch_idx, batch_idx)
                             total_dev_loss += dev_loss.item()
                             total_dev_pred += dev_pred
                             total_dev_labels += labels.tolist()
