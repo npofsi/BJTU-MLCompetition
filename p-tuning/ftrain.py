@@ -39,13 +39,13 @@ torch.cuda.empty_cache()
 
 def construct_generation_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task_name", type=str, default='SNLI')
+    parser.add_argument("--task_name", type=str, default='SST-2')
     parser.add_argument("--data_path", type=str, default='.\\data')
     parser.add_argument("--PLM_name", type=str, default='bert-base-cased')
     parser.add_argument("--print_num", type=int, default=50)
     parser.add_argument("--eval_num", type=int, default=200)
     parser.add_argument("--quick_exp_data_num", type=int, default=10000)  
-    parser.add_argument("--epoch", type=int, default=50)  
+    parser.add_argument("--epoch", type=int, default=1)  
 
     args = parser.parse_args()
     return args
@@ -172,6 +172,43 @@ class FineTuneForClassification(torch.nn.Module):
 
     def eval(self):
         self.model.eval()
+    def evalcase(self,query):
+        self.eval()
+        edict=tokenizer.encode_plus(
+                query,                  # Sentence to encode.
+                add_special_tokens=True,  # Add '[CLS]' and '[SEP]'
+                padding='max_length',
+                max_length = 45,           # Pad & truncate all sentences.
+                pad_to_max_length=True,
+                truncation=True,
+                return_attention_mask=True,   # Construct attn. masks.
+                return_tensors='pt',     # Return pytorch tensors.
+            )
+        query_output = self.model(**edict)
+        
+        logits = query_output['logits']
+        if self.args.task_name == 'SST-2':
+            interested_logits = logits[:, :,
+                                       [self.tokenizer.convert_tokens_to_ids('bad'),
+                                        self.tokenizer.convert_tokens_to_ids('great')]]
+        elif self.args.task_name == 'SNLI':
+            interested_logits = logits[:, :,
+                                       [self.tokenizer.convert_tokens_to_ids('Yes'),
+                                        self.tokenizer.convert_tokens_to_ids('Maybe'),
+                                        self.tokenizer.convert_tokens_to_ids('No')]]
+        
+        pred_ids = torch.argsort(interested_logits, dim=2, descending=True)
+        batch_interested_logits = []
+        predicted_label = [] 
+        
+        
+        for i in range(bz):
+            pred_seq = pred_ids[i, 0].tolist()
+            predicted_label.append(pred_seq[0])
+            batch_interested_logits.append(
+                interested_logits[i, 0].cpu())
+
+        return pred_ids[0]
 
     def forward(self, sentences, labels, sentences2=None,epoch_i=-1,batch_i=-1): 
         #self.model.zero_grad()  
@@ -357,5 +394,6 @@ def train():
                     torch.save(best_ckpt, './saved_modelf_{}/{}_{}.pt'.format(
                         args.task_name, epoch_idx, str(round(float(best_dev), 4))))
         my_lr_scheduler.step()
+        return model
 
-train()
+model=train()

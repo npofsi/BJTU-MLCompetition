@@ -51,7 +51,7 @@ class PTuneForClassification(torch.nn.Module):
         if self.args.task_name == 'SST-2':
             query = f'{sentence} It is {self.tokenizer.mask_token} .'
         elif self.args.task_name == 'SNLI':
-            query = f'{sentence}{self.tokenizer.mask_token}, {sentence2}'
+            query = f'{sentence} is {self.tokenizer.mask_token} with {sentence2}'
         return self.prompt_encoder.tokenize(query, prompt_tokens)
 
 
